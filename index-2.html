@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e0f12">
+<title>重ね撮りカメラ</title>
+<style>
+/* Layout: 上=タイトルと?/設定、中央=参考動画の比率に合わせた撮影ステージ（手順ガイドを内蔵）、下=2本のスライダーと録画ボタン */
+:root{
+  --bg:#0e0f12; --panel:#17191e; --panel2:#1f2229; --line:#2c2f38; --fg:#eceae4; --mute:#969aa5;
+  --accent:#f2b134; --accent-ink:#1a1404; --rec:#e5483b;
+  --ui:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--ui);-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+body{display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}
+button,select,label.btn{font:inherit;color:var(--fg)}
+[hidden]{display:none!important}
+
+.top{display:flex;align-items:center;gap:8px;padding:8px 12px}
+.top h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.04em;flex:1}
+.icon{width:40px;height:40px;border-radius:50%;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;cursor:pointer;font-size:17px;padding:0}
+
+.btn{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:9px 14px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.btn.big{font-size:17px;padding:14px 26px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--mute);text-decoration:underline}
+.btn:focus-visible,.icon:focus-visible,input:focus-visible,#recBtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+#wrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:0 8px;position:relative}
+#stage{position:relative;background:#000;overflow:hidden;border-radius:8px}
+#view,#ref{position:absolute;inset:0;width:100%;height:100%}
+#ref{object-fit:cover;pointer-events:none;opacity:.4}
+#ref.flip{transform:scaleX(-1)}
+#ref.diff{mix-blend-mode:difference;opacity:1!important}
+#grid{position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(to right,transparent calc(33.33% - .5px),rgba(255,255,255,.35) calc(33.33% - .5px),rgba(255,255,255,.35) calc(33.33% + .5px),transparent calc(33.33% + .5px),transparent calc(66.66% - .5px),rgba(255,255,255,.35) calc(66.66% - .5px),rgba(255,255,255,.35) calc(66.66% + .5px),transparent calc(66.66% + .5px)),
+    linear-gradient(to bottom,transparent calc(33.33% - .5px),rgba(255,255,255,.35) calc(33.33% - .5px),rgba(255,255,255,.35) calc(33.33% + .5px),transparent calc(33.33% + .5px),transparent calc(66.66% - .5px),rgba(255,255,255,.35) calc(66.66% - .5px),rgba(255,255,255,.35) calc(66.66% + .5px),transparent calc(66.66% + .5px))}
+
+/* 手順ガイド（ステージ内） */
+#guide{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;background:rgba(14,15,18,.82)}
+.steps{display:flex;gap:6px;margin-bottom:4px}
+.steps i{width:28px;height:4px;border-radius:2px;background:var(--line)}
+.steps i.on{background:var(--accent)}
+#guide .no{font-size:12px;color:var(--accent);letter-spacing:.1em}
+#guide b{font-size:18px;line-height:1.4}
+#guide p{margin:0;color:var(--mute);font-size:13px;max-width:26em}
+#err{color:#ff8d82;font-size:13px}
+
+#hint{position:absolute;left:10px;right:10px;top:10px;background:rgba(0,0,0,.66);border:1px solid rgba(242,177,52,.5);border-radius:10px;padding:9px 12px;font-size:13px;display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+#hint span{flex:1}
+#hint em{font-style:normal;color:var(--accent);font-weight:700}
+#hint small{color:var(--mute);white-space:nowrap}
+
+#count{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:120px;font-weight:700;color:#fff;text-shadow:0 2px 20px rgba(0,0,0,.6);pointer-events:none}
+#tally{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.6);padding:4px 10px;border-radius:999px;font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:6px}
+#tally::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--rec)}
+
+.panel{padding:10px 14px 2px;display:grid;gap:6px}
+.row{display:flex;align-items:center;gap:10px}
+.row label{color:var(--mute);font-size:12px;width:76px;flex:none;letter-spacing:.03em}
+.row output{width:44px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;color:var(--mute);flex:none}
+input[type=range]{flex:1;accent-color:var(--accent);min-width:0;height:28px}
+.mini{width:34px;height:34px;border-radius:50%;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;cursor:pointer;padding:0;font-size:13px;flex:none}
+
+.foot{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:8px 16px 14px;gap:12px}
+.foot .l{justify-self:start}.foot .r{justify-self:end}
+#recBtn{width:74px;height:74px;border-radius:50%;border:4px solid var(--fg);background:transparent;padding:0;cursor:pointer;display:grid;place-items:center}
+#recBtn i{width:56px;height:56px;border-radius:50%;background:var(--rec);transition:all .2s}
+#recBtn.on i{width:28px;height:28px;border-radius:6px}
+#recBtn:disabled{opacity:.3}
+.cap{display:block;text-align:center;font-size:11px;color:var(--mute);margin-top:4px}
+
+/* 下から出るシート */
+.sheet{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(5,6,8,.6)}
+.sheet .card{background:var(--panel);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom,0));max-height:88%;overflow:auto;display:grid;gap:14px}
+.sheet h2{margin:0;font-size:17px}
+.sheet .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sheet .grid2 .btn{width:100%}
+.sheet .field{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--mute);font-size:13px}
+select{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:8px 12px}
+.howto{margin:0;padding:0;list-style:none;display:grid;gap:12px;counter-reset:s}
+.howto li{display:grid;grid-template-columns:30px 1fr;gap:10px;counter-increment:s}
+.howto li::before{content:counter(s);width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-weight:700;display:grid;place-items:center}
+.howto b{display:block}
+.howto span{color:var(--mute);font-size:13px}
+.note{font-size:12px;color:var(--mute);margin:0}
+
+#result{position:fixed;inset:0;z-index:30;background:rgba(8,9,11,.97);display:flex;flex-direction:column;gap:12px;padding:calc(14px + env(safe-area-inset-top,0)) 16px calc(16px + env(safe-area-inset-bottom,0))}
+#result h2{margin:0;font-size:17px;text-align:center}
+#result video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000;border-radius:8px}
+#result p{margin:0;text-align:center;color:var(--mute);font-size:12px}
+#result .grid2{display:grid;grid-template-columns:1fr 1.4fr;gap:10px}
+@media (prefers-reduced-motion:reduce){#recBtn i{transition:none}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>重ね撮りカメラ</h1>
+  <button class="icon" id="helpBtn" type="button" aria-label="使い方">?</button>
+  <button class="icon" id="setBtn" type="button" aria-label="設定">⚙</button>
+</div>
+<input id="file" type="file" accept="video/*" hidden>
+
+<div id="wrap">
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <video id="ref" playsinline muted loop preload="auto"></video>
+    <div id="grid"></div>
+
+    <div id="guide">
+      <div class="steps"><i id="s1" class="on"></i><i id="s2"></i><i id="s3"></i></div>
+      <div class="no" id="gNo">STEP 1 / 3</div>
+      <b id="gTitle">カメラを起動します</b>
+      <p id="gText">ボタンを押して、カメラとマイクの使用を「許可」してください。</p>
+      <button class="btn primary big" id="gBtn" type="button">カメラを起動</button>
+      <button class="btn ghost" id="gSkip" type="button" hidden>参考動画なしで撮る</button>
+      <div id="err"></div>
+    </div>
+
+    <div id="hint" hidden>
+      <span><em>STEP 3</em>　薄く重なった映像に、カメラの映りが重なるようスマホを動かします。合ったら<em>赤いボタン</em>で撮影。</span>
+      <small>閉じる ×</small>
+    </div>
+    <div id="count" hidden></div>
+    <div id="tally" hidden>00:00</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="row">
+    <label for="opacity">参考の濃さ</label>
+    <input id="opacity" type="range" min="0" max="100" value="40">
+    <output id="opOut">40%</output>
+  </div>
+  <div class="row">
+    <label for="scrub">参考の場面</label>
+    <button class="mini" id="playRef" type="button" aria-label="参考動画を再生">▶</button>
+    <input id="scrub" type="range" min="0" max="0" step="0.01" value="0">
+    <output id="tOut">0.0s</output>
+  </div>
+</div>
+
+<div class="foot">
+  <div class="l"><button class="btn" id="changeRef" type="button">参考を変更</button></div>
+  <div>
+    <button id="recBtn" type="button" aria-label="録画" disabled><i></i></button>
+    <span class="cap" id="recCap">撮影</span>
+  </div>
+  <div class="r"><button class="btn" id="diffBtn" type="button" aria-pressed="false" title="ぴったり重なった部分が黒く見えます">位置合わせ</button></div>
+</div>
+
+<!-- 使い方 -->
+<div class="sheet" id="help" hidden>
+  <div class="card">
+    <h2>使い方</h2>
+    <ol class="howto">
+      <li><div><b>カメラを起動</b><span>カメラとマイクの使用を「許可」します。</span></div></li>
+      <li><div><b>参考動画を選ぶ</b><span>真似したい動画を選ぶと、カメラの上に薄く重なります。</span></div></li>
+      <li><div><b>構図を合わせる</b><span>「参考の場面」で合わせたいシーンを選び、薄い映像に重なるようスマホを動かします。「位置合わせ」をONにすると、ぴったり合った部分が黒くなります。</span></div></li>
+      <li><div><b>赤いボタンで撮影</b><span>カウントダウン後に録画が始まり、参考動画も最初から流れます。参考動画が終わると自動で止まります。</span></div></li>
+      <li><div><b>保存する</b><span>「保存する」を押し、「ビデオを保存」を選ぶと写真アプリに入ります。</span></div></li>
+    </ol>
+    <p class="note">録画されるのはカメラの映像だけです。参考動画は映り込みません。</p>
+    <button class="btn primary" id="helpClose" type="button">はじめる</button>
+  </div>
+</div>
+
+<!-- 設定 -->
+<div class="sheet" id="settings" hidden>
+  <div class="card">
+    <h2>設定</h2>
+    <div class="grid2">
+      <button class="btn" id="flipCam" type="button">前後カメラ切替</button>
+      <button class="btn" id="mirror" type="button" aria-pressed="false">カメラを左右反転</button>
+      <button class="btn" id="refFlip" type="button" aria-pressed="false">参考を左右反転</button>
+      <button class="btn" id="gridBtn" type="button" aria-pressed="true">グリッド線</button>
+      <button class="btn" id="micBtn" type="button" aria-pressed="true">マイクで録音</button>
+      <button class="btn" id="refSound" type="button" aria-pressed="false">参考の音を出す</button>
+    </div>
+    <div class="field">撮影前のカウントダウン
+      <select id="countSel" aria-label="カウントダウン">
+        <option value="0">なし</option><option value="3" selected>3秒</option><option value="5">5秒</option><option value="10">10秒</option>
+      </select>
+    </div>
+    <div class="field">参考動画が終わったら自動で停止
+      <button class="btn" id="syncBtn" type="button" aria-pressed="true">ON</button>
+    </div>
+    <p class="note">「参考の音を出す」をONにすると、その音もマイクで録音されます。イヤホン使用時のみおすすめです。</p>
+    <button class="btn primary" id="setClose" type="button">閉じる</button>
+  </div>
+</div>
+
+<!-- 撮影結果 -->
+<div id="result" hidden>
+  <h2>撮影できました</h2>
+  <video id="out" playsinline controls></video>
+  <p id="outInfo"></p>
+  <p>「保存する」→「ビデオを保存」で写真アプリに保存されます。</p>
+  <div class="grid2">
+    <button class="btn" id="retake" type="button">撮り直す</button>
+    <button class="btn primary" id="save" type="button">保存する</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const cam = document.createElement('video');
+cam.playsInline = true; cam.muted = true; cam.setAttribute('playsinline','');
+const canvas = $('#view'), ctx = canvas.getContext('2d');
+const ref = $('#ref'), stage = $('#stage'), wrap = $('#wrap');
+
+let stream = null, facing = 'environment', mirror = false, micOn = true;
+let aspect = 9/16;
+let recorder = null, chunks = [], recording = false, recStart = 0, tallyTimer = null;
+let lastBlob = null, lastURL = null, refURL = null, wakeLock = null, counting = false;
+let step = 1;
+
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(_) { return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(_) {} }
+};
+const pressed = s => $(s).getAttribute('aria-pressed') === 'true';
+const setPressed = (s, v) => $(s).setAttribute('aria-pressed', v ? 'true' : 'false');
+function toggle(s){ const v = !pressed(s); setPressed(s, v); return v; }
+
+/* ---- 手順ガイド ---- */
+function setStep(n){
+  step = n;
+  ['#s1','#s2','#s3'].forEach((s,i) => $(s).classList.toggle('on', i < n));
+  $('#err').textContent = '';
+  if (n === 1){
+    $('#guide').hidden = false;
+    $('#gNo').textContent = 'STEP 1 / 3';
+    $('#gTitle').textContent = 'カメラを起動します';
+    $('#gText').textContent = 'ボタンを押して、カメラとマイクの使用を「許可」してください。';
+    $('#gBtn').textContent = 'カメラを起動';
+    $('#gSkip').hidden = true;
+  } else if (n === 2){
+    $('#guide').hidden = false;
+    $('#gNo').textContent = 'STEP 2 / 3';
+    $('#gTitle').textContent = '参考動画を選びます';
+    $('#gText').textContent = '真似したい構図の動画を選ぶと、カメラの上に薄く重なります。';
+    $('#gBtn').textContent = '参考動画を選ぶ';
+    $('#gSkip').hidden = false;
+  } else {
+    $('#guide').hidden = true;
+    $('#hint').hidden = false;
+  }
+}
+$('#gBtn').onclick = () => step === 1 ? startCamera() : $('#file').click();
+$('#gSkip').onclick = () => { $('#guide').hidden = true; step = 3; };
+$('#hint').onclick = () => { $('#hint').hidden = true; };
+
+/* ---- 表示サイズ ---- */
+function fitStage(){
+  const W = wrap.clientWidth - 16, H = wrap.clientHeight;
+  let w = W, h = W / aspect;
+  if (h > H){ h = H; w = H * aspect; }
+  stage.style.width = Math.floor(w) + 'px';
+  stage.style.height = Math.floor(h) + 'px';
+}
+function setCanvasSize(){
+  const camLong = Math.max(cam.videoWidth || 0, cam.videoHeight || 0) || 1920;
+  const long = Math.min(1920, camLong);
+  let w, h;
+  if (aspect < 1){ h = long; w = long * aspect; } else { w = long; h = long / aspect; }
+  canvas.width = Math.round(w / 2) * 2;
+  canvas.height = Math.round(h / 2) * 2;
+  fitStage();
+}
+addEventListener('resize', fitStage);
+
+/* ---- 描画（録画もこのキャンバス＝見えている範囲そのまま） ---- */
+function draw(){
+  const cw = canvas.width, ch = canvas.height;
+  if (cam.readyState >= 2 && cam.videoWidth){
+    const vw = cam.videoWidth, vh = cam.videoHeight;
+    const s = Math.max(cw / vw, ch / vh), dw = vw * s, dh = vh * s;
+    ctx.save();
+    if (mirror){ ctx.translate(cw, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(cam, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cw, ch);
+  }
+  requestAnimationFrame(draw);
+}
+
+/* ---- カメラ ---- */
+async function startCamera(){
+  $('#err').textContent = '';
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia){
+    $('#err').textContent = 'このページではカメラを使えません。https:// から始まるアドレスで開いてください。';
+    return;
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const video = { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video, audio: micOn });
+  } catch (e) {
+    try { stream = await navigator.mediaDevices.getUserMedia({ video, audio: false }); micOn = false; setPressed('#micBtn', false); }
+    catch (e2) {
+      $('#err').textContent = 'カメラを起動できませんでした。ブラウザの設定でカメラの使用を「許可」にしてから、もう一度押してください。';
+      return;
+    }
+  }
+  cam.srcObject = stream;
+  await cam.play().catch(()=>{});
+  mirror = facing === 'user'; setPressed('#mirror', mirror);
+  await new Promise(r => cam.videoWidth ? r() : cam.addEventListener('loadedmetadata', r, { once: true }));
+  setCanvasSize();
+  $('#recBtn').disabled = false;
+  if (step === 1) setStep(ref.src ? 3 : 2);
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch(_) {}
+}
+$('#flipCam').onclick = () => { if (recording) return; facing = facing === 'user' ? 'environment' : 'user'; if (stream) startCamera(); };
+$('#micBtn').onclick = () => { if (recording) return; micOn = toggle('#micBtn'); if (stream) startCamera(); };
+
+/* ---- 参考動画 ---- */
+$('#changeRef').onclick = () => $('#file').click();
+$('#file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (refURL) URL.revokeObjectURL(refURL);
+  refURL = URL.createObjectURL(f);
+  ref.src = refURL; ref.load();
+  e.target.value = '';
+};
+ref.addEventListener('loadedmetadata', () => {
+  if (ref.videoWidth && ref.videoHeight) aspect = ref.videoWidth / ref.videoHeight;
+  $('#scrub').max = ref.duration || 0;
+  setCanvasSize();
+  ref.currentTime = 0.01;
+  if (step === 2) setStep(3);
+});
+ref.addEventListener('timeupdate', () => { $('#scrub').value = ref.currentTime; $('#tOut').textContent = ref.currentTime.toFixed(1) + 's'; });
+ref.addEventListener('play', () => $('#playRef').textContent = '❚❚');
+ref.addEventListener('pause', () => $('#playRef').textContent = '▶');
+ref.addEventListener('ended', () => { if (recording && pressed('#syncBtn')) stopRec(); });
+$('#scrub').oninput = e => { ref.pause(); ref.currentTime = +e.target.value; };
+$('#playRef').onclick = () => { if (!ref.src) { $('#file').click(); return; } ref.paused ? ref.play() : ref.pause(); };
+
+/* ---- 表示オプション ---- */
+$('#opacity').oninput = e => { ref.style.opacity = e.target.value / 100; $('#opOut').textContent = e.target.value + '%'; };
+$('#mirror').onclick = () => { mirror = toggle('#mirror'); };
+$('#refFlip').onclick = () => ref.classList.toggle('flip', toggle('#refFlip'));
+$('#gridBtn').onclick = () => { $('#grid').hidden = !toggle('#gridBtn'); };
+$('#diffBtn').onclick = () => ref.classList.toggle('diff', toggle('#diffBtn'));
+$('#refSound').onclick = () => { ref.muted = !toggle('#refSound'); };
+$('#syncBtn').onclick = () => { $('#syncBtn').textContent = toggle('#syncBtn') ? 'ON' : 'OFF'; };
+
+/* ---- シート ---- */
+function openSheet(id){ $(id).hidden = false; }
+function closeSheet(id){ $(id).hidden = true; }
+$('#helpBtn').onclick = () => openSheet('#help');
+$('#helpClose').onclick = () => { closeSheet('#help'); store.set('kasane_seen', '1'); };
+$('#setBtn').onclick = () => openSheet('#settings');
+$('#setClose').onclick = () => closeSheet('#settings');
+['#help','#settings'].forEach(id => $(id).addEventListener('click', e => { if (e.target === $(id)) { closeSheet(id); if (id === '#help') store.set('kasane_seen','1'); } }));
+
+/* ---- 録画 ---- */
+function pickMime(){
+  const list = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return list.find(m => window.MediaRecorder?.isTypeSupported?.(m)) || '';
+}
+async function countdown(n){
+  const el = $('#count'); el.hidden = false; counting = true;
+  $('#recCap').textContent = 'キャンセル';
+  for (let i = n; i > 0; i--){
+    el.textContent = i;
+    await new Promise(r => setTimeout(r, 1000));
+    if (!counting) break;
+  }
+  el.hidden = true;
+  return counting;
+}
+async function startRec(){
+  if (!window.MediaRecorder || !canvas.captureStream){
+    $('#guide').hidden = false; $('#err').textContent = 'このブラウザは録画に対応していません。Safari または Chrome の最新版でお試しください。';
+    return;
+  }
+  $('#hint').hidden = true;
+  $('#recBtn').classList.add('on');
+  const n = +$('#countSel').value;
+  if (n && !(await countdown(n))) { $('#recBtn').classList.remove('on'); $('#recCap').textContent = '撮影'; return; }
+  counting = false;
+  const tracks = [...canvas.captureStream(30).getVideoTracks()];
+  if (micOn && stream) stream.getAudioTracks().forEach(t => tracks.push(t));
+  const mime = pickMime();
+  try {
+    recorder = new MediaRecorder(new MediaStream(tracks), mime ? { mimeType: mime, videoBitsPerSecond: 8_000_000 } : {});
+  } catch(e) { recorder = new MediaRecorder(new MediaStream(tracks)); }
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = finish;
+  recorder.start(500);
+  recording = true; recStart = Date.now();
+  $('#recCap').textContent = '停止';
+  $('#tally').hidden = false;
+  tallyTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - recStart) / 1000);
+    $('#tally').textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }, 250);
+  if (ref.src){ ref.loop = !pressed('#syncBtn'); ref.currentTime = 0; ref.play().catch(()=>{}); }
+}
+function stopRec(){
+  if (!recording) return;
+  recording = false;
+  recorder.stop();
+  clearInterval(tallyTimer);
+  $('#tally').hidden = true; $('#tally').textContent = '00:00';
+  $('#recBtn').classList.remove('on');
+  $('#recCap').textContent = '撮影';
+  ref.pause(); ref.loop = true;
+}
+function finish(){
+  const type = recorder.mimeType || chunks[0]?.type || 'video/mp4';
+  lastBlob = new Blob(chunks, { type });
+  if (lastURL) URL.revokeObjectURL(lastURL);
+  lastURL = URL.createObjectURL(lastBlob);
+  $('#out').src = lastURL;
+  $('#outInfo').textContent = canvas.width + '×' + canvas.height + '　' + (lastBlob.size / 1048576).toFixed(1) + 'MB　' + (type.includes('mp4') ? 'MP4' : 'WebM');
+  $('#result').hidden = false;
+}
+$('#recBtn').onclick = () => {
+  if (counting){ counting = false; $('#count').hidden = true; return; }
+  recording ? stopRec() : startRec();
+};
+
+/* ---- 保存 ---- */
+$('#save').onclick = async () => {
+  if (!lastBlob) return;
+  const ext = lastBlob.type.includes('mp4') ? 'mp4' : 'webm';
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const name = `kasane_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  const file = new File([lastBlob], name, { type: lastBlob.type });
+  if (navigator.canShare?.({ files: [file] })){
+    try { await navigator.share({ files: [file] }); return; } catch(e){ if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = lastURL; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+};
+$('#retake').onclick = () => { $('#result').hidden = true; $('#out').pause(); };
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && stream) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch(_) {} }
+});
+
+setCanvasSize();
+setStep(1);
+if (!store.get('kasane_seen')) openSheet('#help');
+draw();
+</script>
+</body>
+</html>
