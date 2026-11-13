@@ -4,7 +4,8 @@
 暗い面（PCの天板など）を自動で見つけ、その内側に囲まれた明るい部分をロゴとみなして
 周囲の色でなじませる。カメラや被写体が動いても追従する。
 
-使い方: remove_logo_video.py <入力動画> <出力動画> [--start 秒] [--end 秒] [--dark 80] [--blur]
+使い方: remove_logo_video.py <入力動画> <出力動画> [--start 秒] [--end 秒] [--dark 80] [--roi x,y,w,h] [--blur]
+  --roi   処理してよい範囲。光沢のある小物など、対象外の物を巻き込まないために指定する
   --start この秒数から処理する
   --end   この秒数まで処理する（面が見えなくなる時刻。省略時は最後まで）
   --dark  「暗い面」とみなす明るさの上限（0-255）
@@ -19,6 +20,7 @@ p.add_argument("src"); p.add_argument("dst")
 p.add_argument("--start", type=float, default=0.0)
 p.add_argument("--end", type=float, default=1e9)
 p.add_argument("--dark", type=int, default=80)
+p.add_argument("--roi", help="処理してよい範囲 x,y,w,h。範囲外は一切変更しない（必ず指定を推奨）")
 p.add_argument("--blur", action="store_true")
 a = p.parse_args()
 
@@ -54,6 +56,10 @@ while True:
             ff = face.copy()
             cv2.floodFill(ff, np.zeros((h + 2, w + 2), np.uint8), (0, 0), 1)
             holes = (ff == 0).astype(np.uint8)
+            if a.roi:
+                rx, ry, rw, rh = (int(v) for v in a.roi.split(","))
+                keep = np.zeros_like(holes); keep[ry:ry + rh, rx:rx + rw] = 1
+                holes &= keep
             if holes.sum() < 0.08 * h * w and holes.any():
                 mask = cv2.dilate(holes, k, iterations=2) * 255
                 if a.blur:

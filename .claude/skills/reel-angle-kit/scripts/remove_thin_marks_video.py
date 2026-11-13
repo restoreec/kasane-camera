@@ -4,7 +4,7 @@
 物体が大きく動いていて remove_logo_video.py で消し残した数フレーム向け。
 その時間帯は物体上の白い細字（キーの文字など）もまとめて消える点に注意。
 
-使い方: remove_thin_marks_video.py <入力動画> <出力動画> <開始秒> <終了秒> [--dark 80]
+使い方: remove_thin_marks_video.py <入力動画> <出力動画> <開始秒> <終了秒> [--dark 80] [--roi x,y,w,h]
 """
 import argparse, os, subprocess, tempfile
 import cv2
@@ -13,6 +13,8 @@ import numpy as np
 p = argparse.ArgumentParser()
 p.add_argument("src"); p.add_argument("dst"); p.add_argument("t0", type=float); p.add_argument("t1", type=float)
 p.add_argument("--dark", type=int, default=80)
+p.add_argument("--thresh", type=int, default=14, help="線とみなす明るさの差。薄い線が残るときは下げる")
+p.add_argument("--roi", help="処理してよい範囲 x,y,w,h。範囲外は一切変更しない（必ず指定を推奨）")
 a = p.parse_args()
 probe = subprocess.run(["ffmpeg", "-v", "error", "-i", a.src, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
                        capture_output=True, check=True).stdout
@@ -40,8 +42,12 @@ while True:
             big = (lab == 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))).astype(np.uint8)
             body = cv2.erode(cv2.morphologyEx(big, cv2.MORPH_CLOSE, k(25)), k(4))  # 細い線は本体の一部として埋まる
             top = cv2.morphologyEx(Y, cv2.MORPH_TOPHAT, k(9))
-            neutral = (np.abs(ycc[..., 1].astype(int) - 128) < 6) & (np.abs(ycc[..., 2].astype(int) - 128) < 6)
-            mask = ((top > 14) & neutral & (body > 0)).astype(np.uint8)
+            neutral = (np.abs(ycc[..., 1].astype(int) - 128) < 12) & (np.abs(ycc[..., 2].astype(int) - 128) < 12)
+            mask = ((top > a.thresh) & neutral & (body > 0)).astype(np.uint8)
+            if a.roi:
+                rx, ry, rw, rh = (int(v) for v in a.roi.split(","))
+                keep = np.zeros_like(mask); keep[ry:ry + rh, rx:rx + rw] = 1
+                mask &= keep
             if mask.any():
                 f = cv2.inpaint(f, cv2.dilate(mask, k(3)) * 255, 5, cv2.INPAINT_TELEA)
                 touched += 1

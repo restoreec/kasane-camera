@@ -11,6 +11,7 @@
    "plane": [[x,y],...],            追従に使う平らな面の範囲（基準フレーム上）
    "rois": [{"name": "...", "poly": [[x,y],...],
              "mode": "all" | "bright" | "darkfill", "margin": 8, "skin": true, "skin_cr": 138, "start": 4.8}]}
+  min_cover: 範囲のうちこの割合以上が対象として見えているときだけ塗る（既定 0.3）
   beige: true にすると、肌色に近いベージュのシールと指を黄みの強さで見分ける
   start: その範囲だけ処理開始を遅らせる / skin_cr: 肌色とみなす赤みの下限（大きいほど肌と判定しにくい）
   skin: false にすると肌色の保護を切る（赤・橙のシールで、手が重ならない範囲向け）
@@ -82,7 +83,9 @@ tmp = tempfile.mktemp(suffix=".mp4")
 wr = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", rate,
                        "-i", "-", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", tmp], stdin=subprocess.PIPE)
 yy, xx = np.mgrid[0:H, 0:W]
-rng = np.random.default_rng(0)
+# 粒状感は毎フレーム変えると「ちらつき」に見えるため、固定の模様を弱くかける
+grain = np.random.default_rng(0).normal(0, 0.6, (H, W, 1)).astype(np.float32)
+state = {}   # 範囲ごとの、前フレームの塗り色と塗り範囲
 el = lambda r: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
 count = {r["name"]: 0 for r in cfg["rois"]}
 
@@ -150,14 +153,35 @@ for i, f in enumerate(frames("bgr24", 3)):
                 if np.abs(fill[area > 0] - medcol).max() > 10:
                     # 手や影で周囲が欠けて近似が傾いたときは、周囲の代表色で埋める
                     fill = np.broadcast_to(medcol, fl.shape).astype(np.float32)
-                diff = np.abs(Yl - fill.mean(axis=2)) > 12
+                # シールは「本体より明るい」か「色が付いている」部分（暗い側の差は影なので無視）
+                chroma = np.abs(ycc[sl][..., 1:].astype(np.float32) - 128).max(axis=2)
+                diff = ((Yl - fill.mean(axis=2)) > 12) | ((chroma > 10) & (sk == 0) if not r.get("skin", True) else False)
                 if (diff & (c > 0)).sum() < 0.15 * c.sum():
                     continue  # 対象がまだ見えていない
                 mask = (area > 0) & (sk == 0) if r["mode"] == "all" else (area > 0) & diff & (sk == 0)
+            if r["mode"] != "darkfill" and mask.sum() < r.get("min_cover", 0.3) * c.sum():
+                # 対象の大半が隠れている（開く途中のフタの下など）ときは塗らない。中途半端に塗ると跡が目立つ
+                state.pop(r["name"], None)
+                continue
             mask = cv2.dilate(cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, el(3)), el(2))
             mask[sk > 0] = 0
             alpha = cv2.GaussianBlur(mask.astype(np.float32), (5, 5), 0)[..., None]
-            fill = fill + rng.normal(0, 1.2, fill.shape)
+            # 塗り色と塗る範囲を前フレームとなじませる（フレームごとの揺れを抑える）
+            st_ = state.setdefault(r["name"], {})
+            mean_now = fill[area > 0].mean(axis=0)
+            # 明るさが急に変わる場面（影から出るなど）では追従を優先し、古い色を引きずらない
+            if "mean" not in st_ or np.abs(st_["mean"] - mean_now).max() > 4:
+                st_["mean"] = mean_now
+            else:
+                st_["mean"] = 0.7 * st_["mean"] + 0.3 * mean_now
+            fill = fill + (st_["mean"] - mean_now) + grain[sl]
+            full = st_.get("alpha")
+            if full is None:
+                full = np.zeros((H, W, 1), np.float32)
+            cur = np.zeros((H, W, 1), np.float32); cur[sl] = alpha
+            full = np.maximum(cur * 0.6 + full * 0.4, 0) if st_.get("alpha") is not None else cur
+            st_["alpha"] = full
+            alpha = full[sl] * (1 - cv2.GaussianBlur(sk.astype(np.float32), (5, 5), 0)[..., None])
             f[sl] = np.clip(fl * (1 - alpha) + fill * alpha, 0, 255).astype(np.uint8)
             count[r["name"]] += 1
     wr.stdin.write(f.tobytes())
