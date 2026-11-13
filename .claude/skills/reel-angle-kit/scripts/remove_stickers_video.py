@@ -10,12 +10,12 @@
    "start": 4.3,                    処理を始める時刻（秒）
    "plane": [[x,y],...],            追従に使う平らな面の範囲（基準フレーム上）
    "rois": [{"name": "...", "poly": [[x,y],...],
-             "mode": "all" | "bright" | "darkfill", "margin": 8, "skin": true, "skin_cr": 138, "start": 4.8}]}
+             "mode": "all" | "bright" | "darkfill" | "blur", "margin": 8, "skin": true, "skin_cr": 138, "start": 4.8}]}
   min_cover: 範囲のうちこの割合以上が対象として見えているときだけ塗る（既定 0.3）
   beige: true にすると、肌色に近いベージュのシールと指を黄みの強さで見分ける
   start: その範囲だけ処理開始を遅らせる / skin_cr: 肌色とみなす赤みの下限（大きいほど肌と判定しにくい）
   skin: false にすると肌色の保護を切る（赤・橙のシールで、手が重ならない範囲向け）
-  mode: all=範囲全体を塗る / bright=周囲より明るい部分だけ塗る / darkfill=範囲内の暗い色で塗る
+  mode: all=範囲全体を塗る / bright=周囲より明るい部分だけ塗る / darkfill=範囲内の暗い色で塗る / blur=ぼかすだけ（strength で強さ）
 """
 import json, os, subprocess, sys, tempfile
 import cv2
@@ -132,6 +132,13 @@ for i, f in enumerate(frames("bgr24", 3)):
             sl = (slice(max(0, y0 - pad), min(H, y0 + h0 + pad)), slice(max(0, x0 - pad), min(W, x0 + w0 + pad)))
             c, sk, Yl, fl = core[sl], (skin if r.get("skin", True) else noskin)[sl], Y[sl], f[sl]
             area = cv2.dilate(c, el(r.get("margin", 8)))
+            if r["mode"] == "blur":
+                # 消さずにぼかすだけ（左右反転したときに裏返る文字を読めなくする用途など）
+                kk = 2 * int(r.get("strength", 9)) + 1
+                a_ = cv2.GaussianBlur((area > 0).astype(np.float32) * (sk == 0), (9, 9), 0)[..., None]
+                f[sl] = np.clip(fl * (1 - a_) + cv2.GaussianBlur(fl, (kk, kk), 0) * a_, 0, 255).astype(np.uint8)
+                count[r["name"]] += 1
+                continue
             if r["mode"] == "darkfill":
                 base = np.percentile(Yl[c > 0], 10)
                 mask = (area > 0) & (Yl > base + 12) & (sk == 0)
